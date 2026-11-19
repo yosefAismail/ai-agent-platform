@@ -11,5 +11,6 @@ export async function requestJson(path, options) {
     }
     throw new Error(detail || `Request failed: ${response.status}`);
   }
+  if (response.status === 204) return null;
   return response.json();
 }

@@ -10,19 +10,24 @@ export default function App() {
     conversations,
     activeConversation,
     activeId,
+    activeMessages,
     setActiveId,
     createConversation,
     updateMessages,
     deleteConversation,
+    ready,
+    loadingMessages,
+    creating,
+    error: conversationError,
   } = useConversations();
 
   useEffect(() => {
-    if (!activeId && conversations.length === 0) createConversation();
-  }, [activeId, conversations.length, createConversation]);
+    if (ready && conversations.length === 0 && !creating) void createConversation();
+  }, [ready, conversations.length, creating, createConversation]);
 
-  const { messages, loading, sendMessage } = useChat({
+  const { messages, loading, error: chatError, sendMessage } = useChat({
     conversationId: activeId,
-    initialMessages: activeConversation?.messages ?? [],
+    initialMessages: activeMessages,
     onMessagesChange: updateMessages,
   });
 
@@ -35,8 +40,15 @@ export default function App() {
           onSelect={setActiveId}
           onCreate={createConversation}
           onDelete={deleteConversation}
+          creating={creating}
         />
-        <ChatWindow messages={messages} loading={loading} onSend={sendMessage} />
+        <ChatWindow
+          messages={messages}
+          loading={loading}
+          disabled={!activeConversation || loadingMessages}
+          error={chatError || conversationError}
+          onSend={sendMessage}
+        />
       </div>
     </main>
   );

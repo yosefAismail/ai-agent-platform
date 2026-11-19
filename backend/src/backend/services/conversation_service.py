@@ -32,6 +32,8 @@ def delete_conversation(db: Session, conversation: Conversation) -> None:
 
 def send_message(db: Session, conversation: Conversation, content: str) -> tuple[Message, Message]:
     user_message = message_repository.create(db, conversation.id, "user", content)
+    if conversation.title == "New conversation":
+        conversation.title = content[:36] + ("…" if len(content) > 36 else "")
     conversation.updated_at = user_message.created_at
     db.commit()
     db.refresh(user_message)

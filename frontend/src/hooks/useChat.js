@@ -1,41 +1,48 @@
 import { useCallback, useState } from "react";
-import { sendChatMessage } from "../services/chatApi.js";
+import { sendConversationMessage } from "../services/chatApi.js";
 
-export default function useChat({ conversationId, initialMessages = [], onMessagesChange }) {
-  const [chatState, setChatState] = useState(() => ({ conversationId, messages: initialMessages }));
+export default function useChat({
+  conversationId,
+  initialMessages = [],
+  onMessagesChange,
+}) {
+  const [chatState, setChatState] = useState(() => ({
+    conversationId,
+    messages: initialMessages,
+  }));
   const [loading, setLoading] = useState(false);
+  const [chatError, setChatError] = useState({ conversationId, message: "" });
   const messages = chatState.conversationId === conversationId
     ? chatState.messages
     : initialMessages;
 
   const sendMessage = useCallback(async (content) => {
     const text = content.trim();
-    if (!text || loading) return;
+    if (!conversationId || !text || loading) return;
 
-    const updatedMessages = [...messages, { role: "user", content: text }];
-    setChatState({ conversationId, messages: updatedMessages });
-    onMessagesChange(conversationId, updatedMessages);
+    const pendingMessages = [...messages, { role: "user", content: text }];
+    setChatState({ conversationId, messages: pendingMessages });
+    onMessagesChange(conversationId, pendingMessages);
     setLoading(true);
+    setChatError({ conversationId, message: "" });
 
     try {
-      const data = await sendChatMessage(updatedMessages);
+      const result = await sendConversationMessage(conversationId, text);
       const completeMessages = [
-        ...updatedMessages,
-        { role: "assistant", content: data.response || "" },
+        ...pendingMessages.slice(0, -1),
+        result.user_message,
+        result.assistant_message,
       ];
       setChatState({ conversationId, messages: completeMessages });
       onMessagesChange(conversationId, completeMessages);
-    } catch (error) {
-      const failedMessages = [
-        ...updatedMessages,
-        { role: "assistant", content: `Error: ${error.message}` },
-      ];
-      setChatState({ conversationId, messages: failedMessages });
-      onMessagesChange(conversationId, failedMessages);
+    } catch (requestError) {
+      // The backend intentionally keeps the user message if Gemini fails.
+      setChatError({ conversationId, message: requestError.message });
     } finally {
       setLoading(false);
     }
   }, [conversationId, loading, messages, onMessagesChange]);
 
-  return { messages, loading, sendMessage };
+  const error = chatError.conversationId === conversationId ? chatError.message : "";
+  return { messages, loading, error, sendMessage };
 }

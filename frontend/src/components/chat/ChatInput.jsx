@@ -1,4 +1,4 @@
-export default function ChatInput({ value, onChange, onSubmit, loading }) {
+export default function ChatInput({ value, onChange, onSubmit, loading, disabled = false }) {
   return (
     <form onSubmit={onSubmit} className="chat-form">
       <label className="input-wrap">
@@ -7,10 +7,10 @@ export default function ChatInput({ value, onChange, onSubmit, loading }) {
           value={value}
           onChange={(event) => onChange(event.target.value)}
           placeholder="Ask something..."
-          disabled={loading}
+          disabled={loading || disabled}
         />
       </label>
-      <button type="submit" disabled={loading || !value.trim()}>
+      <button type="submit" disabled={loading || disabled || !value.trim()}>
         {loading ? "Sending..." : "Send"}
       </button>
     </form>

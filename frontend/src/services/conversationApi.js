@@ -1,27 +1,27 @@
-const STORAGE_KEY = "my-first-ai-agent.conversations";
+import { requestJson } from "./api.js";
 
-function createId() {
-  return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+export function listConversations() {
+  return requestJson("/conversations");
 }
 
-export function getConversations() {
-  try {
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    return Array.isArray(stored) ? stored : [];
-  } catch {
-    return [];
-  }
+export function getConversation(conversationId) {
+  return requestJson(`/conversations/${encodeURIComponent(conversationId)}`);
 }
 
-export function saveConversations(conversations) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
+export function getConversationMessages(conversationId) {
+  return requestJson(`/conversations/${encodeURIComponent(conversationId)}/messages`);
 }
 
-export function createConversation() {
-  return {
-    id: createId(),
-    title: "New conversation",
-    messages: [],
-    updatedAt: new Date().toISOString(),
-  };
+export function createConversation(title = "New conversation") {
+  return requestJson("/conversations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+}
+
+export function deleteConversation(conversationId) {
+  return requestJson(`/conversations/${encodeURIComponent(conversationId)}`, {
+    method: "DELETE",
+  });
 }
