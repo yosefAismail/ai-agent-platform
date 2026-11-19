@@ -4,9 +4,19 @@ import logging
 from google import genai
 from google.genai import types
 
-from backend.core.config import GEMINI_API_KEY, GEMINI_MODEL
+from backend.core.config import (
+    GEMINI_API_KEY,
+    GEMINI_MODEL,
+    MAX_TOOL_CALLS_PER_ROUND,
+    MAX_TOOL_ITERATIONS,
+)
 from backend.models.message import Message
-from backend.services.tools import TOOL_DECLARATIONS, ToolCallValidationError, execute_tool
+from backend.services.tools import (
+    TOOL_DECLARATIONS,
+    ToolCallValidationError,
+    execute_tool,
+    prepare_tool_call,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +32,7 @@ class LLMProviderError(Exception):
 
 def _function_calls(response) -> list:
     """Read function calls across SDK response shapes without requiring response.text."""
+    # Prefer the response structure returned by the Gemini SDK.
     candidates = getattr(response, "candidates", None) or []
     if candidates:
         content = getattr(candidates[0], "content", None)
@@ -33,7 +44,7 @@ def _function_calls(response) -> list:
         if found:
             return found
 
-    # Some response doubles or SDK wrappers expose the convenience property only.
+    # Test doubles and some SDK wrappers expose only the convenience property.
     calls = getattr(response, "function_calls", None)
     return list(calls) if calls else []
 
@@ -46,6 +57,7 @@ def _model_call_content(response):
 
 
 def _generate(contents):
+    # Disable automatic execution so the service can validate and run tools itself.
     return client.models.generate_content(
         model=GEMINI_MODEL,
         contents=contents,
@@ -57,6 +69,7 @@ def _generate(contents):
 
 
 def generate_reply(history: list[Message]) -> str:
+    # Convert stored messages to the role and parts format expected by Gemini.
     contents = [
         {
             "role": "model" if message.role == "assistant" else "user",
@@ -66,56 +79,67 @@ def generate_reply(history: list[Message]) -> str:
     ]
 
     try:
-        response = _generate(contents)
+        for iteration in range(MAX_TOOL_ITERATIONS + 1):
+            response = _generate(contents)
+            calls = _function_calls(response)
 
-        calls = _function_calls(response)
-        if not calls:
-            if not response.text:
-                raise LLMProviderError("The AI provider returned an empty response.")
-            return response.text
+            if not calls:
+                if not response.text:
+                    raise LLMProviderError("The AI provider returned an empty response.")
+                return response.text
 
-        if len(calls) != 1:
-            raise LLMProviderError("The AI provider requested an unsupported number of tools.")
+            if iteration >= MAX_TOOL_ITERATIONS:
+                raise LLMProviderError("The AI provider exceeded the tool iteration limit.")
+            if len(calls) > MAX_TOOL_CALLS_PER_ROUND:
+                raise LLMProviderError("The AI provider exceeded the tool call limit for one round.")
 
-        function_call = calls[0]
-        try:
-            tool_result = execute_tool(function_call.name, function_call.args)
-        except ToolCallValidationError as error:
-            raise LLMProviderError("The AI provider requested an invalid tool call.") from error
+            # Validate every requested call before executing any call in this batch.
+            try:
+                prepared_calls = [
+                    prepare_tool_call(call.name, call.args)
+                    for call in calls
+                ]
+            except ToolCallValidationError as error:
+                logger.warning("Gemini tool call validation failed: %s", type(error).__name__)
+                raise LLMProviderError("The AI provider requested an invalid tool call.") from error
 
-        model_call_content = _model_call_content(response)
-        tool_response_content = types.Content(
-            role="tool",
-            parts=[
-                types.Part.from_function_response(
+            model_call_content = _model_call_content(response)
+            function_response_parts = []
+            for function_call, prepared_call in zip(calls, prepared_calls, strict=True):
+                try:
+                    result = execute_tool(prepared_call)
+                except Exception as error:
+                    logger.warning(
+                        "Tool execution failed. Error type: %s",
+                        type(error).__name__,
+                    )
+                    raise LLMProviderError("The requested tool could not be executed.") from error
+
+                # Echo one matching response for each call. Preserve call IDs when
+                # supplied so parallel calls with the same name remain correlatable.
+                function_response = types.FunctionResponse(
                     name=function_call.name,
-                    response={"result": tool_result},
+                    response={"result": result},
+                    id=getattr(function_call, "id", None),
                 )
-            ],
-        )
+                function_response_parts.append(
+                    types.Part(function_response=function_response)
+                )
 
-        follow_up_response = _generate(
-            [*contents, model_call_content, tool_response_content]
-        )
+            # Keep the role verified against the configured Gemini API integration.
+            tool_response_content = types.Content(
+                role="user",
+                parts=function_response_parts,
+            )
+            contents = [*contents, model_call_content, tool_response_content]
 
-        if _function_calls(follow_up_response):
-            raise LLMProviderError("The AI provider requested more than one tool round.")
-
-        if not follow_up_response.text:
-            raise LLMProviderError("The AI provider returned an empty response.")
-
-        return follow_up_response.text
+        raise LLMProviderError("The AI provider exceeded the tool iteration limit.")
 
     except LLMProviderError:
         raise
 
-    except ToolCallValidationError as error:
-        logger.warning("Gemini tool call validation failed: %s", type(error).__name__)
-        raise LLMProviderError("The AI provider requested an invalid tool call.") from error
-
     except Exception as error:
-        logger.exception(
-            "Gemini request failed. Error type: %s",
-            type(error).__name__,
-        )
+        # Log only the exception class; provider exception strings can contain
+        # request details and should not be copied into logs or API responses.
+        logger.error("Gemini request failed. Error type: %s", type(error).__name__)
         raise LLMProviderError("The AI provider request failed.") from error

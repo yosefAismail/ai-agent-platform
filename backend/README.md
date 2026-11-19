@@ -8,7 +8,9 @@ uv run uvicorn backend.main:app --reload --app-dir src
 ```
 
 Set `GEMINI_API_KEY` in `backend/.env`. The `GEMINI_MODEL` and comma-separated
-`CORS_ORIGINS` settings can also be configured there.
+`CORS_ORIGINS` settings can also be configured there. Agent limits may be set
+with `AGENT_MAX_TOOL_ITERATIONS` (default 5, max 20) and
+`AGENT_MAX_TOOL_CALLS_PER_ROUND` (default 4, max 10).
 
 SQLite data is stored in `backend/data/conversations.db` by default. Set
 `DATABASE_URL` to override the database connection URL.
@@ -38,16 +40,19 @@ The legacy `POST /chat` endpoint remains available. It accepts the full history:
 
 ## Gemini Function Calling
 
-The LLM service offers Gemini one backend tool: `get_current_time`. It returns
-an ISO 8601 timestamp in UTC, with the timezone labeled as `UTC`.
+The LLM service offers five backend tools: `get_current_time` (ISO 8601 UTC
+timestamp), `calculate` (restricted arithmetic), `convert_units` (supported
+length units), `convert_temperature` (C/F/K, rejecting temperatures below
+absolute zero), and `count_words` (text limited to 5,000 characters).
 
-Function calling is handled manually. The backend validates the requested
-function name and arguments against an allowlist, executes the tool, and sends
-the result back to Gemini for a final answer. A request supports one tool
-round-trip only. Direct Gemini text responses continue to work without running
-the tool. Intermediate tool calls and results are not stored as conversation
-messages; only the user's message and the final assistant response are
-persisted.
+Function calling is handled manually. Gemini may answer directly or request
+tools; the backend validates every requested name and argument against an
+allowlist before executing any call in a batch. It returns one matching
+function response for each call, using the `user` role supported by the
+configured integration, and continues up to the configured iteration and
+per-round call limits. Automatic function calling is disabled. Intermediate
+tool calls and results are not stored as conversation messages; only the
+user's message and final assistant response are persisted.
 
 ## Tests
 

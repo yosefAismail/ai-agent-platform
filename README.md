@@ -11,9 +11,8 @@ the source of truth.
 - Persist user and assistant messages in SQLite.
 - Send the new message to the backend; the backend supplies the stored history
   to Gemini.
-- Gemini can answer directly or request the backend's `get_current_time` tool.
-- Manual function-call validation and execution, with one tool round-trip per
-  request.
+- Gemini can answer directly or request one or more registered backend tools.
+- Manual function-call validation and execution in a bounded multi-tool loop.
 - The legacy `POST /chat` endpoint is retained for clients that send full
   message history.
 
@@ -65,6 +64,9 @@ for `GEMINI_API_KEY`:
 GEMINI_API_KEY=your-gemini-api-key
 GEMINI_MODEL=gemini-3.5-flash-lite
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+# Optional agent limits (defaults shown):
+# AGENT_MAX_TOOL_ITERATIONS=5
+# AGENT_MAX_TOOL_CALLS_PER_ROUND=4
 # Optional database override:
 # DATABASE_URL=sqlite:///./data/conversations.db
 ```
@@ -129,13 +131,18 @@ array with `user` and `assistant` roles.
 
 ## Gemini tool behavior
 
-`get_current_time` returns an ISO 8601 UTC timestamp (with a `Z` suffix and an
-explicit `UTC` label). Gemini receives its declaration with the conversation
-history. The backend validates the requested function name and empty arguments,
-executes only the allowlisted function, then sends the result to Gemini for its
-final response. It supports one tool round-trip, not a continuing agent loop.
-Only the user message and final assistant response are stored; intermediate tool
-calls and results are not conversation messages.
+The backend registers five allowlisted tools: `get_current_time`, `calculate`,
+`convert_units`, `convert_temperature`, and `count_words`. Gemini receives their
+declarations with the conversation history and chooses whether to call them.
+The backend validates each name and argument schema before executing a batch,
+then returns a matching function response for every call. It continues for up to
+`AGENT_MAX_TOOL_ITERATIONS` rounds and accepts up to
+`AGENT_MAX_TOOL_CALLS_PER_ROUND` calls in one round. Both limits have bounded
+defaults. Arithmetic uses a restricted parser; length and temperature units are
+explicitly enumerated, absolute-zero temperatures are rejected, and word-count
+input is limited to 5,000 characters. Function responses use the Gemini `user`
+role supported by the configured integration. Only the user message and final
+assistant response are stored; intermediate calls and results are not persisted.
 
 ## Checks
 
@@ -165,8 +172,8 @@ scope of later stages.
 | --- | --- | --- |
 | 1. Current foundation | Complete | React + Vite, FastAPI, Gemini, SQLAlchemy models, SQLite persistence, conversation API, and offline tests. |
 | Frontend persistence integration | Complete | React uses `/conversations`; conversation data is loaded from and saved to SQLite through the backend, not browser `localStorage`. |
-| 2. Function calling + first tool | Implemented; live verification pending | Manual Gemini function calling with the allowlisted `get_current_time` tool; one tool round-trip; mocked tests cover direct replies, validation, handoff, and failures. A successful live Gemini tool call has not yet been confirmed. |
-| 3. Agent loop | Next | Support multiple tool calls with an iteration limit, validation, safe tool errors, and a clear persistence policy for tool activity. |
+| 2. Function calling + first tool | Complete | Manual Gemini function calling, allowlisted tool execution, and persisted final replies. |
+| 3. Multi-tool agent loop | Complete | Five validated tools, bounded sequential rounds and parallel calls, safe failure handling, final-response-only persistence, and a successful configured-model tool round-trip using the `user` function-response role. |
 | 4. Better tool architecture | Planned | Organize tool declarations, schemas, permissions, and execution so adding a tool stays predictable and disallowed tools are refused. |
 | 5. LangGraph | Optional future stage | If orchestration needs grow, model stateful flows with nodes, conditional routing, checkpoints, and possible human approval. |
 | 6. Retrieval-augmented generation (RAG) | Planned | Ingest documents, extract and chunk text, create embeddings, retrieve relevant passages, and have answers cite sources. No vector database has been selected. |
