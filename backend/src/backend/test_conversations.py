@@ -69,6 +69,21 @@ class ConversationPersistenceTests(unittest.TestCase):
         messages = message_repository.list_for_conversation(self.db, conversation.id)
         self.assertEqual([(message.role, message.content) for message in messages], [("user", "Keep this message")])
 
+    def test_successful_tool_turn_persists_only_final_assistant_text(self):
+        conversation = conversation_service.create_conversation(self.db, "Time")
+        final_text = "It is 2025-01-02T03:04:05Z (UTC)."
+        with patch.object(llm_service, "generate_reply", return_value=final_text):
+            conversation_service.send_message(self.db, conversation, "What time is it?")
+
+        messages = message_repository.list_for_conversation(self.db, conversation.id)
+        self.assertEqual(
+            [(message.role, message.content) for message in messages],
+            [
+                ("user", "What time is it?"),
+                ("assistant", final_text),
+            ],
+        )
+
     def test_deleting_conversation_cascades_to_messages(self):
         conversation = conversation_service.create_conversation(self.db, "Test")
         message_repository.create(self.db, conversation.id, "user", "Delete me")
